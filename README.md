@@ -1,67 +1,145 @@
-# bulkcsvinsertion
+import com.fasterxml.jackson.databind.ObjectMapper;
+import okhttp3.OkHttpClient;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+import org.springframework.core.env.Environment;
 
-## SpringBoot 4, Hibernate 4, MySQL 5.7, and java 8
+import java.util.Collections;
+import java.util.List;
+import java.util.Optional;
 
-##Main Purposes
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
 
-###Clustered Data Warehouse
+class WebHookFailedTransactionProcessorTest {
 
-Suppose you are part of a scrum team developing data warehouse for Bloomberg to analyze FX deals. One of customer stories is to import deals details from files into DB. The requested performance is to be able to import the file containing 100,000 records in less than 5 seconds.
+    @Mock
+    private MemberConfigDao memberConfigDao;
 
-Request logic as following :
+    @Mock
+    private WebHookResponseDao webHookResponseDao;
 
-File format is CSV contains the following fields (Deal Unique Id, From Currency ISO Code "Ordering Currency", To Currency ISO Code, Deal timestamp, Deal Amount in ordering currency).
-Validate row structure.
-Valid rows should be stored in table/document, with reference to source
- file name .
-Invalid rows should be stored into another table/document, with reference to source file name.
-The DB contains another table to maintain accumulative count of deals per Ordering Currency "Columns : Currency ISO Code, CountOfDeals ", so upon completion of importing process the system should increase count of deals per currency.
-System should not import same file twice.
-No rollback allowed, what every rows imported should be saved in DB.
+    @Mock
+    private ConnectorServiceUtils connectorServiceUtils;
 
-Technical Specs :
+    @Mock
+    private Environment env;
 
-Access to DB should be through JPA.
-For DB type, you can select between (MySql or MongoDB)
-Provide a web interface for uploading files and inquire about results "using filename" following web applications 3 tier architecture. Spring Batch is not allowed.
+    @Mock
+    private RequestsAuditDao requestsAuditDao;
 
-###Info
-Upload multiple file and store into the database and download file 
+    @Mock
+    private ObjectMapper objectMapper;
 
-It's cloud deploy-able (jetty-runner.jar + compiled war file)
+    @Mock
+    private OkHttpClient okHttpClient;
 
-For configuration of Spring MVC, it uses Java config instead of xml config.
-For Hibernate 4 and MySQL, please modify src/main/resources/application.properties file
-Build and run the app in command line environment
+    @InjectMocks
+    private WebHookFailedTransactionProcessor webHookFailedTransactionProcessor;
 
-###1.Create table in MySQL
+    @BeforeEach
+    void setUp() {
+        MockitoAnnotations.openMocks(this);
+    }
 
-Copy the text in src/main/resources/sample/sql.sql and run it to create a table in MySQL (in phpmyadmin or MySQLworkbench or mysql command line environment)
+    @Test
+    void testProcessFailedWebHookRecords_Success() {
+        // Arrange
+        MemberConfig memberConfig = new MemberConfig();
+        List<MemberConfig> memberConfigs = Collections.singletonList(memberConfig);
+        when(memberConfigDao.getWebHookEnabledConfigDetails()).thenReturn(memberConfigs);
 
-###2.Build package
-```
-$ mvn package
-```
-###3.Run jetty-runner
-```
-$ ./run.sh
-or
-$ java -jar jetty/jetty-runner-9.2.6.v20141205.jar --port 8090 --log jetty.log target/SpringFileUpload.war
-```
-Running URL: http://localhost:8099/bulkUpload
+        // Act
+        webHookFailedTransactionProcessor.processFailedWebHookRecords();
 
-**docker image coming soon
+        // Assert
+        verify(memberConfigDao, times(1)).getWebHookEnabledConfigDetails();
+        verify(webHookResponseDao, times(1)).getWebHookFailedTransactions(anyString(), anyString());
+    }
 
-#Steps to set up development environment in Eclipse
+    @Test
+    void testProcessFailedWebHookRecords_NoRecords() {
+        // Arrange
+        when(memberConfigDao.getWebHookEnabledConfigDetails()).thenReturn(Collections.emptyList());
 
-##After you clone this project from github, run
-```
-$ mvn package
-$ mvn eclipse:eclipse
-```
-Open Eclipse to import the project
-Click top File -> Import -> Maven -> Existing Maven Projects (Choose the folder that you just downloded)
-Right click your project, click Properties -> Java Build Path, remove all M2_REPO/***/*** jars (names started with M2_REPO), click OK.
-Check if Maven dependencies are setup correctly. Right click your project, click Properties -> Java Build Path-> Libraries, and the Maven Dependencies include all your dependent jar files
-Right click pom.xml, click Run as-> Maven clean, then Run as-> Maven Install
-Right click your project, click Run as -> Run as SpringBoot Applciation/ Java Application (SpringBootWebApplication.java is the main class)
+        // Act
+        webHookFailedTransactionProcessor.processFailedWebHookRecords();
+
+        // Assert
+        verify(memberConfigDao, times(1)).getWebHookEnabledConfigDetails();
+        verify(webHookResponseDao, never()).getWebHookFailedTransactions(anyString(), anyString());
+    }
+
+    @Test
+    void testProcessFailedTransaction_Success() throws Exception {
+        // Arrange
+        MemberConfig memberConfig = mock(MemberConfig.class);
+        WebHookFailedTransactions failedTransaction = mock(WebHookFailedTransactions.class);
+        WebHookRequest webHookRequest = mock(WebHookRequest.class);
+        WebHookRequestEntry webHookRequestEntry = mock(WebHookRequestEntry.class);
+
+        when(objectMapper.readValue(anyString(), eq(WebHookRequest.class))).thenReturn(webHookRequest);
+        when(webHookRequest.getEntries()).thenReturn(Collections.singletonList(webHookRequestEntry));
+        when(webHookRequestEntry.getDecisionLabels()).thenReturn(Collections.singletonList("APPROVE"));
+        when(failedTransaction.getRetry()).thenReturn(1);
+        when(memberConfig.getWebHookRetry()).thenReturn("3");
+
+        // Act
+        webHookFailedTransactionProcessor.processFailedTransaction(memberConfig, failedTransaction, Collections.emptySet(), 1);
+
+        // Assert
+        verify(webHookResponseDao, times(1)).updateWebHookFailedTransactionsRetry(anyString(), anyString(), anyString(), anyInt(), eq("SUCCESS"));
+        verify(connectorServiceUtils, times(1)).sendDataToQueue(any(), any(), anyString(), anyLong(), anyString(), anyString(), anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void testProcessFailedTransaction_RetryLimitReached() {
+        // Arrange
+        MemberConfig memberConfig = mock(MemberConfig.class);
+        WebHookFailedTransactions failedTransaction = mock(WebHookFailedTransactions.class);
+
+        when(failedTransaction.getRetry()).thenReturn(3);
+        when(memberConfig.getWebHookRetry()).thenReturn("3");
+
+        // Act
+        webHookFailedTransactionProcessor.processFailedTransaction(memberConfig, failedTransaction, Collections.emptySet(), 3);
+
+        // Assert
+        verify(webHookResponseDao, never()).updateWebHookFailedTransactionsRetry(anyString(), anyString(), anyString(), anyInt(), eq("SUCCESS"));
+        verify(connectorServiceUtils, never()).sendDataToQueue(any(), any(), anyString(), anyLong(), anyString(), anyString(), anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void testProcessWithSAR_ReturnsResponse() {
+        // Arrange
+        MemberConfig memberConfig = mock(MemberConfig.class);
+        WebHookFailedTransactions failedTransaction = mock(WebHookFailedTransactions.class);
+        WebHookRequestEntry webHookRequestEntry = mock(WebHookRequestEntry.class);
+
+        // Act
+        Optional<String> response = webHookFailedTransactionProcessor.processWithSAR(memberConfig, failedTransaction, false, webHookRequestEntry);
+
+        // Assert
+        assertTrue(response.isPresent());
+        assertEquals("Processed successfully", response.get());
+    }
+
+    @Test
+    void testProcessWithSAR_ReturnsEmptyOnError() {
+        // Arrange
+        MemberConfig memberConfig = mock(MemberConfig.class);
+        WebHookFailedTransactions failedTransaction = mock(WebHookFailedTransactions.class);
+        WebHookRequestEntry webHookRequestEntry = mock(WebHookRequestEntry.class);
+
+        // Simulate error case if needed by adjusting the mock behavior here.
+
+        // Act
+        Optional<String> response = webHookFailedTransactionProcessor.processWithSAR(memberConfig, failedTransaction, true, webHookRequestEntry);
+
+        // Assert
+        assertFalse(response.isPresent());
+    }
+}
