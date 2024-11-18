@@ -1,0 +1,115 @@
+Setting Up the Proxy Fraud Service Locally
+This guide provides step-by-step instructions to set up the Proxy Fraud Service on your local machine.
+
+1. Clone the Repository
+Run the following command to clone the Proxy Fraud Service repository:
+
+bash
+Copy code
+git clone https://github
+2. Disable Vault and Kubernetes Config Loading
+Since Vault and Kubernetes configurations are not accessible locally, they need to be disabled.
+
+Open the bootstrap.yaml file in your project.
+Add the following configuration:
+yaml
+Copy code
+cloud:
+  vault:
+    enabled: false
+  kubernetes:
+    config:
+      enabled: false
+If you need to add Vault-specific key-value pairs for local use, include them in the application.yaml file.
+3. Install Google Cloud SDK
+Follow the guide below to install Google Cloud SDK on your local machine:
+Install Google Cloud SDK on Windows
+
+4. Configure Datastore and Pub/Sub Emulators Locally
+The application requires Datastore and Pub/Sub connections. Follow these steps to set up emulators locally:
+
+4.1 Pub/Sub Emulator
+Install the emulator:
+bash
+Copy code
+gcloud components install pubsub-emulator
+gcloud components update
+Start the emulator:
+bash
+Copy code
+gcloud beta emulators pubsub start
+Set the environment variable:
+bash
+Copy code
+set PUBSUB_EMULATOR_HOST=localhost:8085
+4.2 Configure Topics and Subscriptions
+Clone the Pub/Sub Python utility repository:
+
+bash
+Copy code
+git clone https://github.com/googleapis/python-pubsub
+cd python-pubsub/samples/snippets
+Install dependencies:
+
+bash
+Copy code
+pip install -r requirements.txt
+(If SSL certificate errors occur, trust the host using the command below, then retry the installation):
+
+bash
+Copy code
+pip config set global.trusted-host "pypi.org files.pythonhosted.org pypi.python.org"
+Create a topic:
+
+bash
+Copy code
+python publisher.py dev-local create int-dev-audit-listener
+Verify topics:
+
+bash
+Copy code
+curl -X GET http://localhost:8085/v1/project
+Create a subscription:
+
+bash
+Copy code
+python subscriber.py ate-dev-local create efx-int-dev-audit-listener efx8-int-dev-audit-listener
+Verify subscriptions:
+
+bash
+Copy code
+curl -X GET http://localhost:8085/v1/proje
+4.3 Datastore Emulator
+Install the emulator:
+bash
+Copy code
+gcloud components install cloud-datastore-emulator
+Start the emulator:
+bash
+Copy code
+gcloud beta emulators datastore start --pro
+4.4 Update application.yaml
+Add the following configuration for the emulators:
+
+yaml
+
+5. Add Configuration and Logging Files
+Download the required files:
+application.yaml
+logback.yaml
+Place these files in the src/main/resources directory.
+6. Modify pplication.java
+Comment out the Barricade initialization code to bypass encryption keyring fetching (since it is not accessible locally).
+Locate and modify the method in pplication.java as follows:
+
+java
+Copy code
+
+7. Start the Spring Boot Application
+Ensure that the Datastore and Pub/Sub emulators are running.
+Start the Spring Boot application via your IDE (e.g., IntelliJ IDEA).
+8. Verify the Setup
+Use the health API to confirm that the server is running:
+
+http
+Copy code
