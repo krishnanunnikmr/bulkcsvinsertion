@@ -65,3 +65,51 @@ Right click your project, click Properties -> Java Build Path, remove all M2_REP
 Check if Maven dependencies are setup correctly. Right click your project, click Properties -> Java Build Path-> Libraries, and the Maven Dependencies include all your dependent jar files
 Right click pom.xml, click Run as-> Maven clean, then Run as-> Maven Install
 Right click your project, click Run as -> Run as SpringBoot Applciation/ Java Application (SpringBootWebApplication.java is the main class)
+
+
+
+import okhttp3.*;
+import java.io.IOException;
+import java.util.Base64;
+
+public class Main {
+    public static void main(String[] args) {
+        OkHttpClient client = new OkHttpClient();
+
+        // Replace with your username and password
+        String username = "your-username";
+        String password = "your-password";
+
+        // Encode username:password to Base64
+        String credential = Base64.getEncoder().encodeToString((username + ":" + password).getBytes());
+
+        // Build URL with query parameters
+        HttpUrl url = HttpUrl.parse("https://fedssqa.equifax.com/as/token.oauth2")
+                .newBuilder()
+                .addQueryParameter("grant_type", "client_credentials")
+                .build();
+
+        Request request = new Request.Builder()
+            .url(url) // Use the dynamically constructed URL
+            .post(RequestBody.create(new byte[0])) // Empty POST body
+            .addHeader("Authorization", "Basic " + credential)
+            .build();
+
+        client.newCall(request).enqueue(new Callback() {
+            @Override
+            public void onFailure(Call call, IOException e) {
+                e.printStackTrace();
+            }
+
+            @Override
+            public void onResponse(Call call, Response response) throws IOException {
+                if (response.isSuccessful()) {
+                    System.out.println(response.body().string());
+                } else {
+                    System.out.println("Request failed: " + response.code());
+                }
+            }
+        });
+    }
+}
+
